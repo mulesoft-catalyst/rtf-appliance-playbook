@@ -1,0 +1,16 @@
+#RTF Download URL
+#no: copy from control host, yes: download from internet
+rtf_download: yes
+rtf_installer: "https://runtime-fabric.s3.amazonaws.com/installer/runtime-fabric-1.1.1568899906-253f482.tar.gz"
+#can be copy/scp from ansible control hosts
+# rtf_installer: installers/runtime-fabric-1.1.1568899906-253f482.tar.gz
+#working directory
+install_dir: /opt/anypoint/runtimefabric
+#rtf install variables
+rtf_license: ##PUT your BASE64 license file here
+rtf_cluster_name: ysono-pce
+rtf_token: yohanes123
+rtf_activation: ## PUT your activation code here
+#http_proxy tower_settings
+http_proxy: 
+no_proxy:

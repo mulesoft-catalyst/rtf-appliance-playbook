@@ -1,0 +1,83 @@
+---
+- hosts: all
+  tasks:
+  - name: install required package
+    package:
+        name: "{{ item }}"
+        state: present
+    become: yes
+    with_items:
+     - bind-utils
+     - telnet
+     - wget
+     - screen
+  - name: create install dir
+    become: true
+    file:
+        path: "{{install_dir}}"
+        state: directory
+        mode: '0755'
+        owner: '{{ansible_user}}'
+        group: '{{ansible_user}}'
+  - name: Copy Init Script
+    copy:
+        src: "scripts/init.sh"
+        dest: "{{install_dir}}"
+        mode: '0755'
+
+- hosts: installer[0]
+  tasks:
+#   - name: debug variable
+#     debug:
+#         var: hostvars
+#         verbosity: 2
+  - name: check Installer Package is present
+    stat:
+      path: "{{install_dir}}/installer.tar.gz"
+    register: installer
+  - name: download Installer Package
+    get_url:
+      url:  "{{rtf_installer}}"
+      dest: "{{install_dir}}/installer.tar.gz"
+    when: installer.stat.exists == False and rtf_download
+  # - name: download Installer Package
+  #   shell: "wget -O {{install_dir}}/installer.tar.gz {{rtf_installer}}"
+  #   when: installer.stat.exists == False and rtf_download
+  - name: copy installer file
+    copy:
+        src: "{{rtf_installer}}"
+        dest: "{{install_dir}}"
+        mode: "0644"
+    when: installer.stat.exists == False and not rtf_download
+  - name: copy ENV Installer
+    template:
+        src: "templates/env-{{role}}.j2"
+        dest: "{{install_dir}}/env"
+        mode: '0755'
+  - name: execute init.sh
+    become: true
+    shell: ./init.sh
+    args:
+        chdir: "{{install_dir}}"
+- hosts: nodes
+  vars:
+    install_script: "install-node.sh"
+  tasks:
+#   - name: debug variable
+#     debug:
+#         var: groups['masters'][0]
+#         verbosity: 2
+#   - name: debug variable inventory
+#     debug:
+#         var: hostvars
+#         verbosity: 2
+  - name: copy ENV Nodes
+    template:
+        src: "templates/env-{{role}}.j2"
+        dest: "{{install_dir}}/env"
+        mode: '0755'
+  - name: execute init.sh Node
+    become: true
+    shell: ./init.sh
+    args:
+        chdir: "{{install_dir}}"
