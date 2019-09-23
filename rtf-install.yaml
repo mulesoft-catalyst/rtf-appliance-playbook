@@ -46,7 +46,7 @@
   - name: copy installer file
     copy:
         src: "{{rtf_installer}}"
-        dest: "{{install_dir}}"
+        dest: "{{install_dir}}/installer.tar.gz"
         mode: "0644"
     when: installer.stat.exists == False and not rtf_download
   - name: copy ENV Installer
