@@ -9,8 +9,6 @@
     with_items:
      - bind-utils
      - telnet
-     - wget
-     - screen
   - name: create install dir
     become: true
     file:
@@ -65,7 +63,7 @@
   tasks:
 #   - name: debug variable
 #     debug:
-#         var: groups['masters'][0]
+#         var: groups['installer'][0]
 #         verbosity: 2
 #   - name: debug variable inventory
 #     debug:
