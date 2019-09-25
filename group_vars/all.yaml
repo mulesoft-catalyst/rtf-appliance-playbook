@@ -12,7 +12,7 @@ rtf_license: ##PUT your BASE64 license file here
 rtf_cluster_name: ysono-pce
 rtf_token: yohanes123
 rtf_activation: ## PUT your activation code here
-#http_proxy tower_settings
+#http proxy setting
 http_proxy: 
 no_proxy:
 #rtf backup dir
