@@ -1,13 +1,6 @@
 ---
 - hosts: all
   tasks:
-  - name: install required package
-    package:
-        name: "{{ item }}"
-        state: present
-    become: yes
-    with_items: "{{ packages }}"
-    when: packages is defined
   - name: debug variable
     debug:
         var: groups['installer'][0]
@@ -16,6 +9,13 @@
     debug:
         var: hostvars
         verbosity: 2
+  - name: install required package
+    package:
+        name: "{{ item }}"
+        state: present
+    become: yes
+    with_items: "{{ packages }}"
+    when: packages is defined
   - name: create install dir
     become: true
     file:
