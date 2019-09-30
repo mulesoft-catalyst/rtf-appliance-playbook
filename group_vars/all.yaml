@@ -19,3 +19,8 @@ no_proxy:
 monitoring_proxy:
 #rtf backup dir
 rtf_backup_dir: "/var/lib/gravity/backup"
+#mandatory package to install if any
+packages:
+# example packages in list
+# - bind-utils
+# - telnet
