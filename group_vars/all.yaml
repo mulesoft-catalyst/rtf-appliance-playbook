@@ -15,5 +15,7 @@ rtf_activation: ## PUT your activation code here
 #http proxy setting
 http_proxy: 
 no_proxy:
+#socks5 proxy setting
+monitoring_proxy:
 #rtf backup dir
 rtf_backup_dir: "/var/lib/gravity/backup"
