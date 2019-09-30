@@ -6,7 +6,7 @@
         name: "{{ item }}"
         state: present
     become: yes
-    with_items: {{packages}}
+    with_items: '{{ packages }}'
   - name: debug variable
     debug:
         var: groups['installer'][0]
