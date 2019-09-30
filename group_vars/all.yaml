@@ -9,7 +9,7 @@ rtf_installer: "https://runtime-fabric.s3.amazonaws.com/installer/runtime-fabric
 install_dir: /opt/anypoint/runtimefabric
 #rtf install variables
 rtf_license: ##PUT your BASE64 license file here
-rtf_cluster_name: ysono-pce
+rtf_cluster_name: ysono-rtf
 rtf_token: yohanes123
 rtf_activation: ## PUT your activation code here
 #http proxy setting
