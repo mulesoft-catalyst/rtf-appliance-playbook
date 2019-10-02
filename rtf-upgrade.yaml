@@ -3,6 +3,15 @@
   vars:
     date: "{{ lookup('pipe', 'date +%Y%m%d-%H%M') }}"
   tasks:
+  - name: Change RTF dir owner to Ansible User
+    become: true
+    file:
+        path: "{{install_dir}}"
+        state: directory
+        mode: '0755'
+        owner: '{{ansible_user}}'
+        group: '{{ansible_user}}'
+        recurse: 'yes'
   - name: create backup dir
     become: true
     file:
