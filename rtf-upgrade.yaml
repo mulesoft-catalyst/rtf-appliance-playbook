@@ -53,7 +53,7 @@
         paths: "{{install_dir}}/installer-update"
         patterns: "*.*"
     register: filesFound
-  - name: extart installer
+  - name: extract installer
     unarchive:
         src: "{{install_dir}}/installer-update.tar.gz"
         dest: "{{install_dir}}/installer-update"
