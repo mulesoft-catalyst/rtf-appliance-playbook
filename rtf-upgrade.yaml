@@ -61,6 +61,6 @@
     when: filesFound.matched == 0
   - name: Running Upgrade
     become: yes
-    shell: ./upgrade > upgrade-{{date}}.log
+    shell: ./upgrade > upgrade-{{date}}.log 2>&1
     args:
         chdir: "{{install_dir}}/installer-update"
