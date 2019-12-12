@@ -2,14 +2,14 @@
 set -eo pipefail
 
 # Constants
-SCRIPT_VERSION='20190913-9758db1'
+SCRIPT_VERSION='20191002-ee70f84'
 REDIRECT_LOG=/var/log/rtf-init.log
 FSTAB_COMMENT="# Added by RTF"
 BASE_DIR=/opt/anypoint/runtimefabric
 STATE_DIR=$BASE_DIR/.state
 SKIP_TEXT="Skipped. Already executed."
 METADATA_IP=169.254.169.254
-CURL_OPTS="-k -sS --fail --connect-timeout 10 --retry 5 --retry-delay 15"
+CURL_OPTS="-L -k -sS --fail --connect-timeout 10 --retry 5 --retry-delay 15"
 CURL_METADATA_OPTS="${CURL_OPTS} --noproxy ${METADATA_IP}"
 AWS_METADATA_URL=http://$METADATA_IP/latest/meta-data
 AZURE_METADATA_HEADER="Metadata:true"
@@ -34,6 +34,8 @@ RTF_SERVICE_UID=${RTF_SERVICE_UID:-1000}
 RTF_SERVICE_GID=${RTF_SERVICE_GID:-1000}
 
 # ADDITIONAL_ENV_VARS_PLACEHOLDER_DO_NOT_REMOVE
+KUBE_SERVICE_SUBNET=${KUBE_SERVICE_SUBNET:-10.100.0.0/16}
+KUBE_POD_SUBNET=${KUBE_POD_SUBNET:-10.244.0.0/16}
 
 # detect OS
 case "$(uname -s)" in
@@ -61,6 +63,8 @@ function on_exit {
     echo
 
   fi
+
+  echo -n $SCRIPT_VERSION > $STATE_DIR/version
 }
 
 function on_error {
@@ -394,7 +398,6 @@ EOF
     cat > /etc/sysctl.d/50-telekube.conf <<EOF
 net.ipv4.ip_forward=1
 net.bridge.bridge-nf-call-iptables=1
-fs.inotify.max_user_watches=1048576
 EOF
 
     if sysctl -q fs.may_detach_mounts >/dev/null 2>&1; then
@@ -412,7 +415,19 @@ function start_system_services() {
     systemctl start chronyd
 }
 
-function add_systemd_cronjob() {
+function fetch_rtfctl() {
+    if [[ -z $RTF_ENDPOINT ]]; then
+        RTFCTL_URL=https://anypoint.mulesoft.com/runtimefabric/api/download/rtfctl/latest
+    else
+        RTFCTL_URL=${RTF_ENDPOINT}/runtimefabric/api/download/rtfctl/latest
+    fi
+
+    echo "Fetching rtfctl ${RTFCTL_URL}..."
+    $CURL_WITH_PROXY $CURL_OPTS -o rtfctl $RTFCTL_URL
+    chmod +x ./rtfctl
+}
+
+function add_cgroup_cleanup_job() {
   source /etc/os-release
   if [[ $VERSION_ID != 7* ]]; then
     echo "Skipped. Detected OS version: $VERSION_ID, not compatible."
@@ -462,19 +477,21 @@ EOF"
 }
 EOF
 
+  $GRAVITY_BASH "/var/lib/gravity/cron/systemd_gc.sh"
+
   echo "Added cgroup cleanup job."
 }
 
 function fetch_install_package() {
-    # if [[ ! -z $RTF_INSTALL_PACKAGE_URL ]]; then
-    #     echo "Fetching installation package \"$RTF_INSTALL_PACKAGE_URL\"..."
-    #     $CURL_WITH_PROXY $CURL_OPTS $RTF_INSTALL_PACKAGE_URL -o installer.tar.gz
-    # else
+    #if [[ ! -z $RTF_INSTALL_PACKAGE_URL ]]; then
+    #    echo "Fetching installation package \"$RTF_INSTALL_PACKAGE_URL\"..."
+    #    $CURL_WITH_PROXY $CURL_OPTS $RTF_INSTALL_PACKAGE_URL -o installer.tar.gz
+    #else
         until [ -f $BASE_DIR/installer.tar.gz ]; do
             echo "Waiting for installation package at $BASE_DIR/installer.tar.gz..."
             sleep 15
         done
-    # fi
+    #fi
 
     if [ ! -f $BASE_DIR/installer.tar.gz ]; then
         echo "Error: failed to fetch installation package. Exiting."
@@ -486,7 +503,7 @@ function install_cluster() {
     echo "Extracting installer package..."
     mkdir -p installer
     tar -zxf installer.tar.gz -C installer
-    pushd installer > /dev/null
+    cd installer
 
     GRAVITY_VERSION=$(./gravity version | grep "^Version:" | awk '{ print $2 }')
     if [[ ${GRAVITY_VERSION} != "5.2"* ]] && [ -n "${RTF_HTTP_PROXY}" ]; then
@@ -516,6 +533,8 @@ EOF
       --role=$RTF_NODE_ROLE \
       --service-uid=$RTF_SERVICE_UID \
       --service-gid=$RTF_SERVICE_GID \
+      --service-cidr=${KUBE_SERVICE_SUBNET} \
+      --pod-network-cidr=${KUBE_POD_SUBNET} \
       ${EXTRA_CONFIG}
 
     if [ ! -f /usr/bin/gravity ]; then
@@ -526,7 +545,10 @@ EOF
     # ensure we have completed the installation by inspecting our cluster-info cm
     ${KUBECTL_CMD_PREFIX} get configmap cluster-info -nkube-system > /dev/null
 
-    popd > /dev/null
+    # load KUBECONFIG environment variable for rtfctl
+    set -o allexport; source /etc/environment; set +o allexport
+
+    cd $BASE_DIR
 }
 
 function inject_proxy_into_dockerd() {
@@ -583,11 +605,17 @@ function join_cluster() {
     set -e
 
     ./gravity join $RTF_INSTALLER_IP --advertise-addr=$RTF_PRIVATE_IP --token=$RTF_TOKEN --cloud-provider=generic --role=$RTF_NODE_ROLE
+    if [ ! -f /usr/bin/gravity ]; then
+        echo "Error: /usr/bin/gravity does not exist"
+        exit 1
+    fi
 }
 
 function install_rtf_components() {
     if [ -z "$RTF_ACTIVATION_TOKEN" ]; then
-        echo "Skipped. RTF_ACTIVATION_TOKEN not set"
+        echo "Skipped. RTF_ACTIVATION_TOKEN not set.  Creating namespace only."
+        ${KUBECTL_CMD_PREFIX} create ns rtf || true
+        ${KUBECTL_CMD_PREFIX} label ns rtf rtf.mulesoft.com/role=rtf || true
         return 0
     fi
 
@@ -655,7 +683,7 @@ function install_mule_license() {
         return 0
     fi
     echo "Configuring Mule license..."
-    /usr/local/bin/rtf-set-mule-license.sh "$RTF_MULE_LICENSE"
+    ./rtfctl apply mule-license "$RTF_MULE_LICENSE"
 }
 
 function generate_ops_center_credentials() {
@@ -691,6 +719,11 @@ function generate_ops_center_credentials() {
     echo "URL:      https://$RTF_PRIVATE_IP:32009/web"
     echo "User:     admin@runtime-fabric"
     echo "Password: $ADMIN_PASSWORD"
+}
+
+function set_inotify_limit() {
+    sysctl -w fs.inotify.max_user_watches=1048576
+    echo "fs.inotify.max_user_watches=1048576" > /etc/sysctl.d/inotify.conf
 }
 
 function purge() {
@@ -818,9 +851,11 @@ elif [ "$1" == "activate" ]; then
 elif [ "$1" == "reinstall-components" ]; then
     reinstall
     exit
-elif [ "$1" == "add-systemd-cronjob" ]; then
-    add_systemd_cronjob
-    $GRAVITY_BASH "/var/lib/gravity/cron/systemd_gc.sh"
+elif [ "$1" == "configure-system" ]; then
+    STEP_COUNT=3
+    run_step set_inotify_limit "Set inotify watch limits"
+    run_step add_cgroup_cleanup_job "Add cgroup cleanup job"
+    run_step start_system_services "Start system services"
     exit
 elif [ "$1" != "" ]; then
     echo "Invalid command: $1"
@@ -838,29 +873,33 @@ fetch_activation_properties
 validate_properties
 
 if [ "$RTF_INSTALL_ROLE" == "leader" ]; then
-    STEP_COUNT=12
+    STEP_COUNT=14
 else
-    STEP_COUNT=8
+    STEP_COUNT=10
 fi
 
+# Cluster Setup
 run_step install_required_packages "Install required packages"
 run_step format_and_mount_disks "Format and mount disks"
 run_step configure_ip_tables "Configure IP tables rules"
 run_step configure_kernel_modules "Enable kernel modules"
+run_step set_inotify_limit "Set inotify watch limits"
 run_step start_system_services "Start system services"
-
+run_step fetch_rtfctl "Fetch rtfctl tool"
 if [ "$RTF_INSTALL_ROLE" == "leader" ]; then
     run_step fetch_install_package "Fetch installation package"
     run_step install_cluster "Create cluster"
-    run_step inject_proxy_into_dockerd "Configure dockerd proxy"
-    run_step install_rtf_components "Install RTF components"
-    run_step install_mule_license "Install Mule license"
-    run_step add_systemd_cronjob "Add cgroup cleanup job"
     run_step generate_ops_center_credentials "Generate Ops Center credentials"
 else
     run_step join_cluster "Join cluster"
-    run_step inject_proxy_into_dockerd "Configure dockerd proxy"
-    run_step add_systemd_cronjob "Add cgroup cleanup job"
+fi
+run_step inject_proxy_into_dockerd "Configure dockerd proxy"
+run_step add_cgroup_cleanup_job "Add cgroup cleanup job"
+
+# RTF Setup
+if [ "$RTF_INSTALL_ROLE" == "leader" ]; then
+    run_step install_rtf_components "Install RTF components"
+    run_step install_mule_license "Install Mule license"
 fi
 
 echo -e "Runtime Fabric installation complete."
