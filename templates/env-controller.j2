@@ -1,10 +1,10 @@
-RTF_PRIVATE_IP={{internal_hostname}}
+RTF_PRIVATE_IP={{internal_ip}}
 RTF_NODE_ROLE=controller_node
 RTF_INSTALL_ROLE=joiner
 RTF_ETCD_DEVICE={{etcd_device}}
 RTF_DOCKER_DEVICE={{docker_device}}
 RTF_TOKEN="{{rtf_token}}"
-RTF_INSTALLER_IP="{{hostvars[groups['installer'][0]].internal_hostname}}"
+RTF_INSTALLER_IP="{{hostvars[groups['installer'][0]].internal_ip}}"
 RTF_HTTP_PROXY={{http_proxy}}
 RTF_NO_PROXY={{no_proxy}}
 RTF_MONITORING_PROXY={{monitoring_proxy}}
