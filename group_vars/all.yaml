@@ -9,9 +9,9 @@ rtf_installer: "https://runtime-fabric.s3.amazonaws.com/installer/runtime-fabric
 install_dir: /opt/anypoint/runtimefabric
 # rtf install variables
 rtf_license: # put base64 encoded license.lic file here `base64 </path/to/license.lic`
-rtf_cluster_name: ysono-rtf
-rtf_token: yohanes123
-rtf_activation: ## PUT your activation code here
+rtf_cluster_name: runtime-fabric
+rtf_token: gravity-cluster-token
+rtf_activation: # PUT new RTF cluster activation data here
 # http proxy setting
 http_proxy: 
 no_proxy:
