@@ -12,8 +12,8 @@ rtf_license: # put base64 encoded license.lic file here `base64 </path/to/licens
 rtf_cluster_name: runtime-fabric
 rtf_token: gravity-cluster-token
 rtf_activation: # PUT new RTF cluster activation data here
-# http proxy setting
-http_proxy: 
+# http proxy setting - http://proxy.company.com:3128
+http_proxy:
 no_proxy:
 # socks5 proxy setting
 monitoring_proxy:
