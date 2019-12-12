@@ -15,7 +15,7 @@ rtf_activation: # PUT new RTF cluster activation data here
 # http proxy setting - http://proxy.company.com:3128
 http_proxy:
 no_proxy:
-# socks5 proxy setting
+# socks5 proxy setting for anypoint monitoring - socks5://socks5.company.com:1080
 monitoring_proxy:
 # rtf backup dir
 rtf_backup_dir: "/var/lib/gravity/backup"
