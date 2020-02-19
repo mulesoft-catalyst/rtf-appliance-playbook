@@ -2,7 +2,7 @@
 # no: copy from control host, yes: download from internet
 rtf_download: yes
 # rtf_download: no
-rtf_installer: "https://runtime-fabric.s3.amazonaws.com/installer/runtime-fabric-1.1.1572976203-3ad8a93.tar.gz"
+rtf_installer: "https://runtime-fabric.s3.amazonaws.com/installer/runtime-fabric-1.1.1581474166-1f657f1.tar.gz"
 # can be copy/scp from ansible control hosts
 # rtf_installer: installers/runtime-fabric-1.1.1572976203-3ad8a93.tar.gz
 # working directory
