@@ -2,7 +2,7 @@
 set -eo pipefail
 
 # Constants
-SCRIPT_VERSION='20191002-ee70f84'
+SCRIPT_VERSION='20200117-a53e64e'
 REDIRECT_LOG=/var/log/rtf-init.log
 FSTAB_COMMENT="# Added by RTF"
 BASE_DIR=/opt/anypoint/runtimefabric
@@ -18,10 +18,10 @@ AZURE_METADATA_VERSION=2017-08-01
 DOCKER_MOUNT=/var/lib/gravity
 ETCD_MOUNT=/var/lib/gravity/planet/etcd
 REGISTRATION_ATTEMPTS=5
+JOINING_ATTEMPTS=10
 GRAVITY_BASH="gravity planet enter -- --notty /usr/bin/bash -- -c"
-SYSTEM_NO_PROXY="telekube.local,kubernetes.default.svc,svc.cluster.local,10.100.0.1"
+SYSTEM_NO_PROXY="kubernetes.default.svc,.local,0.0.0.0/0"
 ACTIVATION_PROPERTIES_FILE=activation-properties.json
-RTF_ACTIVATION_IMAGE=${RTF_ACTIVATION_IMAGE:-leader.telekube.local:5000/rtf-upgrade}
 KUBECTL_CMD_PREFIX=${KUBECTL_CMD_PREFIX:-"gravity planet enter -- --notty /usr/bin/kubectl --"}
 HELM="gravity planet enter -- --notty /usr/bin/helm --"
 CURRENT_STEP=init
@@ -32,10 +32,10 @@ LINE="\n================================================"
 # Defaults
 RTF_SERVICE_UID=${RTF_SERVICE_UID:-1000}
 RTF_SERVICE_GID=${RTF_SERVICE_GID:-1000}
+POD_NETWORK_CIDR=${POD_NETWORK_CIDR:-10.244.0.0/16}
+SERVICE_CIDR=${SERVICE_CIDR:-10.100.0.0/16}
 
 # ADDITIONAL_ENV_VARS_PLACEHOLDER_DO_NOT_REMOVE
-KUBE_SERVICE_SUBNET=${KUBE_SERVICE_SUBNET:-10.100.0.0/16}
-KUBE_POD_SUBNET=${KUBE_POD_SUBNET:-10.244.0.0/16}
 
 # detect OS
 case "$(uname -s)" in
@@ -55,7 +55,7 @@ function on_exit {
     echo "** Oh no! Your installation has stopped due to an error. **"
     echo "***********************************************************"
     echo "  1. Visit the troubleshooting guide for help:"
-    echo "     https://docs.mulesoft.com/runtime-fabric/1.2/troubleshoot-guide#${ANCHOR}"
+    echo "     https://docs.mulesoft.com/runtime-fabric/latest/troubleshoot-guide#${ANCHOR}"
     echo
     echo "  2. Resume installation by running ${BASE_DIR}/init.sh"
     echo
@@ -168,9 +168,6 @@ function fetch_activation_properties() {
         sleep $((10 * $COUNT))
     done
 
-    RTF_REGION=$(simple_json_get RTF_REGION `cat $ACTIVATION_PROPERTIES_FILE`)
-    RTF_ORG_ID=$(simple_json_get RTF_ORG_ID `cat $ACTIVATION_PROPERTIES_FILE`)
-
     if [ -z "$RTF_INSTALL_PACKAGE_URL" ]; then
         RTF_INSTALL_PACKAGE_URL=$(simple_json_get RTF_INSTALL_PACKAGE_URL `cat $ACTIVATION_PROPERTIES_FILE`)
     fi
@@ -178,6 +175,8 @@ function fetch_activation_properties() {
     if [ ! -z $RTF_INSTALL_PACKAGE_URL ] && [[ $RTF_INSTALL_PACKAGE_URL != http* ]]; then
         RTF_INSTALL_PACKAGE_URL="https://$RTF_INSTALL_PACKAGE_URL"
     fi
+
+    rm $ACTIVATION_PROPERTIES_FILE
 }
 
 function detect_properties() {
@@ -246,8 +245,6 @@ function validate_properties() {
         echo RTF_NAME: $RTF_NAME
         # Registration properties
         echo RTF_ACTIVATION_TOKEN: $RTF_ACTIVATION_TOKEN
-        echo RTF_ORG_ID: $RTF_ORG_ID
-        echo RTF_REGION: $RTF_REGION
         echo RTF_MULE_LICENSE: ...$(echo $RTF_MULE_LICENSE | tail -c 10)
         [ -z "$RTF_NAME" ] && echo "Error: RTF_NAME not set" && exit 1
     else
@@ -483,15 +480,15 @@ EOF
 }
 
 function fetch_install_package() {
-    #if [[ ! -z $RTF_INSTALL_PACKAGE_URL ]]; then
-    #    echo "Fetching installation package \"$RTF_INSTALL_PACKAGE_URL\"..."
-    #    $CURL_WITH_PROXY $CURL_OPTS $RTF_INSTALL_PACKAGE_URL -o installer.tar.gz
-    #else
+    if [[ ! -z $RTF_INSTALL_PACKAGE_URL ]]; then
+        echo "Fetching installation package \"$RTF_INSTALL_PACKAGE_URL\"..."
+        $CURL_WITH_PROXY $CURL_OPTS $RTF_INSTALL_PACKAGE_URL -o installer.tar.gz
+    else
         until [ -f $BASE_DIR/installer.tar.gz ]; do
             echo "Waiting for installation package at $BASE_DIR/installer.tar.gz..."
             sleep 15
         done
-    #fi
+    fi
 
     if [ ! -f $BASE_DIR/installer.tar.gz ]; then
         echo "Error: failed to fetch installation package. Exiting."
@@ -531,10 +528,10 @@ EOF
       --cloud-provider=generic \
       --flavor=$FLAVOR \
       --role=$RTF_NODE_ROLE \
+      --pod-network-cidr=$POD_NETWORK_CIDR \
+      --service-cidr=$SERVICE_CIDR \
       --service-uid=$RTF_SERVICE_UID \
       --service-gid=$RTF_SERVICE_GID \
-      --service-cidr=${KUBE_SERVICE_SUBNET} \
-      --pod-network-cidr=${KUBE_POD_SUBNET} \
       ${EXTRA_CONFIG}
 
     if [ ! -f /usr/bin/gravity ]; then
@@ -601,80 +598,55 @@ function join_cluster() {
             curl $CURL_OPTS http://$RTF_INSTALLER_IP:30945/api/v1/status/info -o .rtf_installed_flag
         done
     fi
+
+    COUNT=0
+    while :
+    do
+        export GRAVITY_PEER_CONNECT_TIMEOUT=60m
+        ./gravity join $RTF_INSTALLER_IP --advertise-addr=$RTF_PRIVATE_IP --token=$RTF_TOKEN --cloud-provider=generic --role=$RTF_NODE_ROLE
+
+        if [ "$?" == "0" ]; then
+            if [ ! -f /usr/bin/gravity ]; then
+                echo "Error: /usr/bin/gravity does not exist"
+                exit 1
+            fi
+            break
+        fi
+
+        let COUNT=COUNT+1
+        if [ $COUNT -ge $JOINING_ATTEMPTS ]; then
+            echo "Error: Failed to register $COUNT times, giving up."
+            exit 1
+        fi
+        echo "Retrying joining the cluster in 30 seconds..."
+        sleep 30
+    done
+
     # enable exit-on-error
     set -e
+}
 
-    ./gravity join $RTF_INSTALLER_IP --advertise-addr=$RTF_PRIVATE_IP --token=$RTF_TOKEN --cloud-provider=generic --role=$RTF_NODE_ROLE
-    if [ ! -f /usr/bin/gravity ]; then
-        echo "Error: /usr/bin/gravity does not exist"
-        exit 1
-    fi
+function create_rtf_namespace() {
+    ${KUBECTL_CMD_PREFIX} create ns rtf || true
+    ${KUBECTL_CMD_PREFIX} label ns rtf rtf.mulesoft.com/role=rtf || true
 }
 
 function install_rtf_components() {
     if [ -z "$RTF_ACTIVATION_TOKEN" ]; then
         echo "Skipped. RTF_ACTIVATION_TOKEN not set.  Creating namespace only."
-        ${KUBECTL_CMD_PREFIX} create ns rtf || true
-        ${KUBECTL_CMD_PREFIX} label ns rtf rtf.mulesoft.com/role=rtf || true
+        create_rtf_namespace
         return 0
     fi
 
-    # extract all the environment variables from the activation properties
-    local regex="\"([^\"]+)\":\"([^\"]+)\""
-    local properties=$(cat $ACTIVATION_PROPERTIES_FILE)
-    REGISTRATION_ENV=""
+    if [ -z "$RTF_AGENT_URL" ]; then
+        HTTP_PROXY="$RTF_HTTP_PROXY" MONITORING_PROXY="$RTF_MONITORING_PROXY" ./rtfctl install ${RTF_ACTIVATION_DATA}
+    else
+        HTTP_PROXY="$RTF_HTTP_PROXY" MONITORING_PROXY="$RTF_MONITORING_PROXY" ./rtfctl install ${RTF_ACTIVATION_DATA} --helm-chart-location ${RTF_AGENT_URL}
+    fi
+}
 
-    while [[ $properties =~ $regex ]]; do
-        key=${BASH_REMATCH[1]}
-        value=${BASH_REMATCH[2]}
-        REGISTRATION_ENV="$REGISTRATION_ENV--env=\"$key=$value\" "
-        properties=${properties#*"${BASH_REMATCH[0]}"}
-    done
-
-    REGISTRATION_CMD="$KUBECTL_CMD_PREFIX \
-       run rtf-registration --image $RTF_ACTIVATION_IMAGE \
-       --image-pull-policy=IfNotPresent \
-       --restart=Never --rm --attach \
-       --env=\"ACTIVATION_TOKEN=$RTF_ACTIVATION_TOKEN\" \
-       --env=\"REGION=$RTF_REGION\" \
-       --env=\"ORG_ID=$RTF_ORG_ID\" \
-       --env=\"INSTALLER_URL_OVERRIDE=$RTF_AGENT_URL\" \
-       --env=\"CONTROL_PLANE_ENDPOINT=$RTF_ENDPOINT\" \
-       --env=\"NAME=$RTF_NAME\" \
-       --env=\"HTTP_PROXY=$RTF_HTTP_PROXY\" \
-       --env=\"NO_PROXY=$RTF_NO_PROXY\" \
-       --env=\"RTF_MONITORING_PROXY=$RTF_MONITORING_PROXY\" \
-       --env=\"VERBOSE=$VERBOSE\" \
-       $REGISTRATION_ENV \
-       --overrides='{\"apiVersion\":\"v1\",\"spec\":{\"nodeSelector\":{\"node-role.kubernetes.io/master\": \"true\"}, \"tolerations\":[{\"effect\":\"NoSchedule\",\"key\":\"node-role.kubernetes.io/master\",\"operator\":\"Exists\"}]}}'"
-
-    #disable exit-on-error
-    set +e
-
-    COUNT=0
-    while :
-    do
-        eval $REGISTRATION_CMD
-
-        if [ "$?" == "0" ]; then
-            break
-        fi
-        let COUNT=COUNT+1
-        if [ $COUNT -ge $REGISTRATION_ATTEMPTS ]; then
-            echo "Error: Failed to register $COUNT times, giving up."
-            exit 1
-        fi
-        echo "Retrying registration in 30 seconds..."
-        sleep 30
-    done
-    # enable exit-on-error
-    set -e
-
-    SET_RTF_NAMESPACE_LABEL_CMD="$KUBECTL_CMD_PREFIX \
-        label ns --overwrite rtf rtf.mulesoft.com/role=rtf"
-    eval $SET_RTF_NAMESPACE_LABEL_CMD
-
-    rm $ACTIVATION_PROPERTIES_FILE
+function wait_for_connectivity() {
+    ./rtfctl wait
 }
 
 function install_mule_license() {
@@ -734,10 +706,11 @@ function purge() {
     case "$choice" in
         y|Y )
             echo "Removing RTF components..."
-            ${HELM} delete runtime-fabric --purge
+            ${HELM} delete runtime-fabric --purge || true
+
+            ${KUBECTL_CMD_PREFIX} get secret custom-properties -nrtf --export -oyaml > custom_properties.yaml
             echo "Removing applications..."
             gravity planet enter -- --notty /usr/bin/kubectl -- delete ns -l rtf.mulesoft.com/role || true
-            rm .state/install_rtf_components .state/install_mule_license .state/init-complete
             while [ true ]; do
                 NS_REMAINING=$(gravity planet enter -- --notty /usr/bin/kubectl -- get ns --no-headers --ignore-not-found -l rtf.mulesoft.com/role | wc -l)
                 if [ "$NS_REMAINING" == "0" ]; then
@@ -746,6 +719,7 @@ function purge() {
                 sleep 1
                 echo "Waiting for $NS_REMAINING namespaces to be removed..."
             done
+            rm .state/install_rtf_components .state/install_mule_license .state/wait_for_connectivity .state/init-complete || true
         ;;
 
     n|N ) exit
@@ -768,12 +742,22 @@ function activate() {
   decode_activation_data
   fetch_activation_properties
   validate_properties
+  create_rtf_namespace
+
+  # if we backed up custom-properties during purge, reapply it now
+  if [ -f custom_properties.yaml ]; then
+    cp custom_properties.yaml /var/lib/gravity/rtf_custom_properties.yaml
+    ${KUBECTL_CMD_PREFIX} apply -nrtf -f /var/lib/gravity/rtf_custom_properties.yaml
+  fi
+
   install_rtf_components
   exit
 }
 
 function reinstall() {
     RTF_ENV=${RTF_ENV:-prod}
+
+    printf "\nAnypoint Platform environment: ${RTF_ENV}\n\n"
 
     # reinstall is only valid to run when we have runtime-fabric installed.
     ${HELM} status runtime-fabric
@@ -797,7 +781,7 @@ function reinstall() {
 
     echo
     echo "Fetching RTF installation package..."
-    awsFile="runtime-fabric-agent-${RTF_VERSION}.tgz"
+    awsFile="rtf-agent-${RTF_VERSION}.tgz"
     bucket="worker-cloud-helm-${RTF_ENV}"
     resource="/${bucket}/${awsFile}"
     contentType="application/x-compressed-tar"
@@ -873,7 +857,7 @@ fetch_activation_properties
 validate_properties
 
 if [ "$RTF_INSTALL_ROLE" == "leader" ]; then
-    STEP_COUNT=14
+    STEP_COUNT=15
 else
     STEP_COUNT=10
 fi
@@ -900,6 +884,7 @@ run_step add_cgroup_cleanup_job "Add cgroup cleanup job"
 if [ "$RTF_INSTALL_ROLE" == "leader" ]; then
     run_step install_rtf_components "Install RTF components"
     run_step install_mule_license "Install Mule license"
+    run_step wait_for_connectivity "Wait for connectivity"
 fi
 
 echo -e "Runtime Fabric installation complete."
