@@ -17,6 +17,10 @@ http_proxy:
 no_proxy:
 # socks5 proxy setting for anypoint monitoring - socks5://socks5.company.com:1080
 monitoring_proxy:
+# k8s service CIDR
+k8s_service_network_cidr="10.100.0.0/16"
+# k8s pod network CIDR
+k8s_pod_network_cidr: "10.244.0.0/16"
 # rtf backup dir
 rtf_backup_dir: "/var/lib/gravity/backup"
 # mandatory package to install if any -- UNCOMMENT List Below to set it up
