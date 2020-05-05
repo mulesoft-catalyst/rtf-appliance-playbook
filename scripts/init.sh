@@ -2,7 +2,7 @@
 set -eo pipefail
 
 # Constants
-SCRIPT_VERSION='20200117-a53e64e'
+SCRIPT_VERSION='20200427-666f5a4'
 REDIRECT_LOG=/var/log/rtf-init.log
 FSTAB_COMMENT="# Added by RTF"
 BASE_DIR=/opt/anypoint/runtimefabric
@@ -19,7 +19,7 @@ DOCKER_MOUNT=/var/lib/gravity
 ETCD_MOUNT=/var/lib/gravity/planet/etcd
 REGISTRATION_ATTEMPTS=5
 JOINING_ATTEMPTS=10
-GRAVITY_BASH="gravity planet enter -- --notty /usr/bin/bash -- -c"
+GRAVITY_BASH="gravity planet enter -- --notty /bin/bash -- -c"
 SYSTEM_NO_PROXY="kubernetes.default.svc,.local,0.0.0.0/0"
 ACTIVATION_PROPERTIES_FILE=activation-properties.json
 KUBECTL_CMD_PREFIX=${KUBECTL_CMD_PREFIX:-"gravity planet enter -- --notty /usr/bin/kubectl --"}
@@ -77,10 +77,11 @@ trap on_exit EXIT
 function run_step() {
     CURRENT_STEP=$1
     local DESCRIPTION=$2
+    local FORCE=$3
     (( CURRENT_STEP_NBR++ )) || true
     echo
     echo -e "${CURRENT_STEP_NBR} / ${STEP_COUNT}: ${DESCRIPTION}${LINE}"
-    if [ -f ${STATE_DIR}/${CURRENT_STEP} ]; then
+    if [ -z "${FORCE}" ] && [ -f ${STATE_DIR}/${CURRENT_STEP} ]; then
         echo ${SKIP_TEXT}
         return 0
     fi
@@ -836,10 +837,14 @@ elif [ "$1" == "reinstall-components" ]; then
     reinstall
     exit
 elif [ "$1" == "configure-system" ]; then
+    force=""
+    if [ "$2" == "--force" ] || [ "$2" == "-f" ]; then
+        force="1"
+    fi
     STEP_COUNT=3
-    run_step set_inotify_limit "Set inotify watch limits"
-    run_step add_cgroup_cleanup_job "Add cgroup cleanup job"
-    run_step start_system_services "Start system services"
+    run_step set_inotify_limit "Set inotify watch limits" $force
+    run_step add_cgroup_cleanup_job "Add cgroup cleanup job" $force
+    run_step start_system_services "Start system services" $force
     exit
 elif [ "$1" != "" ]; then
     echo "Invalid command: $1"
