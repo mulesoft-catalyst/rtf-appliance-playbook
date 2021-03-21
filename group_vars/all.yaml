@@ -2,16 +2,16 @@
 # no: copy from control host, yes: download from internet
 rtf_download: yes
 # rtf_download: no
-rtf_installer: "https://runtime-fabric.s3.amazonaws.com/installer/runtime-fabric-1.1.1588363273-4110aff.tar.gz"
+rtf_installer: "https://runtime-fabric.s3.amazonaws.com/installer/runtime-fabric-1.1.1613157109-f27c821.tar.gz"
 # can be copy/scp from ansible control hosts
-# rtf_installer: installers/runtime-fabric-1.1.1572976203-3ad8a93.tar.gz
+# rtf_installer: installers/runtime-fabric-1.1.1613157109-f27c821.tar.gz
 # working directory
 install_dir: /opt/anypoint/runtimefabric
 # rtf install variables
-rtf_license: # put base64 encoded license.lic file here `base64 </path/to/license.lic`
+rtf_license: # put base64 encoded binary license.lic file here `base64 -w0 /path/to/license.lic`
 rtf_cluster_name: runtime-fabric
 rtf_token: gravity-cluster-token
-rtf_activation: # PUT new RTF cluster activation data here
+rtf_activation: # paste new RTF cluster activation data here
 # http proxy setting - http://proxy.company.com:3128
 http_proxy:
 no_proxy:
@@ -25,5 +25,9 @@ k8s_pod_network_cidr: "10.244.0.0/16"
 rtf_backup_dir: "/var/lib/gravity/backup"
 # mandatory package to install if any -- UNCOMMENT List Below to set it up
 # packages:
+# - tmux
+# - vim
+# - bash-completion
+# - rsync
 # - bind-utils
-# - telnet
+# - nmap
