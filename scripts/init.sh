@@ -2,7 +2,7 @@
 set -eo pipefail
 
 # Constants
-SCRIPT_VERSION='20200427-666f5a4'
+SCRIPT_VERSION='20210129-4a7f3c6'
 REDIRECT_LOG=/var/log/rtf-init.log
 FSTAB_COMMENT="# Added by RTF"
 BASE_DIR=/opt/anypoint/runtimefabric
@@ -19,6 +19,7 @@ DOCKER_MOUNT=/var/lib/gravity
 ETCD_MOUNT=/var/lib/gravity/planet/etcd
 REGISTRATION_ATTEMPTS=5
 JOINING_ATTEMPTS=10
+INSTALL_TIMEOUT=600 # 10 minutes
 GRAVITY_BASH="gravity planet enter -- --notty /bin/bash -- -c"
 SYSTEM_NO_PROXY="kubernetes.default.svc,.local,0.0.0.0/0"
 ACTIVATION_PROPERTIES_FILE=activation-properties.json
@@ -27,6 +28,7 @@ HELM="gravity planet enter -- --notty /usr/bin/helm --"
 CURRENT_STEP=init
 CURRENT_STEP_NBR=0
 SEP="Done.\n"
+CLOUD_PROVIDER=
 LINE="\n================================================"
 
 # Defaults
@@ -34,6 +36,8 @@ RTF_SERVICE_UID=${RTF_SERVICE_UID:-1000}
 RTF_SERVICE_GID=${RTF_SERVICE_GID:-1000}
 POD_NETWORK_CIDR=${POD_NETWORK_CIDR:-10.244.0.0/16}
 SERVICE_CIDR=${SERVICE_CIDR:-10.100.0.0/16}
+INTERNAL_INTERFACE=${INTERNAL_INTERFACE:-eth0}
+DISABLE_SELINUX=${DISABLE_SELINUX:-false}
 
 # ADDITIONAL_ENV_VARS_PLACEHOLDER_DO_NOT_REMOVE
 
@@ -173,6 +177,10 @@ function fetch_activation_properties() {
         RTF_INSTALL_PACKAGE_URL=$(simple_json_get RTF_INSTALL_PACKAGE_URL `cat $ACTIVATION_PROPERTIES_FILE`)
     fi
 
+    if [ -z "$RTF_REGION" ]; then
+	     RTF_REGION=$(simple_json_get RTF_REGION `cat $ACTIVATION_PROPERTIES_FILE`)
+    fi
+
     if [ ! -z $RTF_INSTALL_PACKAGE_URL ] && [[ $RTF_INSTALL_PACKAGE_URL != http* ]]; then
         RTF_INSTALL_PACKAGE_URL="https://$RTF_INSTALL_PACKAGE_URL"
     fi
@@ -189,11 +197,13 @@ function detect_properties() {
         HTTP_CODE=$(curl $CURL_METADATA_OPTS -o /dev/null -w "%{http_code}" $AWS_METADATA_URL/ || true)
         if [ $HTTP_CODE == 200 ]; then
             echo "Detected cloud provider: AWS"
+            CLOUD_PROVIDER=aws
             RTF_PRIVATE_IP=$(curl $CURL_METADATA_OPTS $AWS_METADATA_URL/local-ipv4)
         else
             HTTP_CODE=$(curl $CURL_METADATA_OPTS -o /dev/null -w "%{http_code}" -H$AZURE_METADATA_HEADER "$AZURE_METADATA_URL/?api-version=$AZURE_METADATA_VERSION" || true)
             if [ $HTTP_CODE == 200 ]; then
                 echo "Detected cloud provider: Azure"
+                CLOUD_PROVIDER=azure
                 RTF_PRIVATE_IP=$(curl $CURL_METADATA_OPTS -H$AZURE_METADATA_HEADER "$AZURE_METADATA_URL/network/interface/0/ipv4/ipAddress/0/privateIpAddress?api-version=$AZURE_METADATA_VERSION&format=text")
                 TAGS=$(curl $CURL_METADATA_OPTS -H$AZURE_METADATA_HEADER "$AZURE_METADATA_URL/compute/tags?api-version=$AZURE_METADATA_VERSION&format=text")
                 IFS=';' read -ra TAG_ARRAY <<< "$TAGS"
@@ -207,8 +217,10 @@ function detect_properties() {
 
     if [ -z $RTF_HTTP_PROXY ]; then
         CURL_WITH_PROXY="curl"
+        YUM_WITH_PROXY="yum"
     else
         CURL_WITH_PROXY="curl --proxy $RTF_HTTP_PROXY"
+        YUM_WITH_PROXY="https_proxy='$RTF_HTTP_PROXY' http_proxy='$RTF_HTTP_PROXY' yum"
     fi
 
     # Update NO_PROXY to make sure we bypass local addresses
@@ -263,13 +275,24 @@ function validate_properties() {
     return 0
 }
 
+function check_kernel_version() {
+    MIN_VALID_KERNEL_VERSION="3.10.0-1127"
+    CURRENT_KERNEL_VERSION=$(uname -r)
+    FIRST_SORTED=$(printf "${CURRENT_KERNEL_VERSION}\n${MIN_VALID_KERNEL_VERSION}\n" | sort -V | head -n 1)
+
+    if [[ "${MIN_VALID_KERNEL_VERSION}" != "${FIRST_SORTED}" ]]; then
+        echo "Error: The kernel version ${CURRENT_KERNEL_VERSION} is too old. It must be at least ${MIN_VALID_KERNEL_VERSION}."
+        exit 1
+    fi
+}
+
 function install_required_packages() {
     #disable exit-on-error
     set +e
     rpm -q chrony
     if [ $? != 0 ]; then
         echo "Installing chrony..."
-        yum install -y chrony || true
+        bash -c "$YUM_WITH_PROXY install -y chrony" || true
     fi
 
     printf "Checking chrony sync status..."
@@ -365,15 +388,94 @@ function format_and_mount_disks() {
         mount $ETCD_MOUNT
         chown -R $RTF_SERVICE_UID:$RTF_SERVICE_GID $ETCD_MOUNT
     fi
+
+    if [ "$CLOUD_PROVIDER" == "azure" ]; then
+        if [ -e "/dev/rootvg/optlv" ]; then
+            echo "Extending /opt volume"
+            lvextend -L15G /dev/rootvg/optlv
+            xfs_growfs /dev/rootvg/optlv
+        fi
+        if [ -e "/dev/rootvg/tmplv" ]; then
+            echo "Extending /tmp volume"
+            lvextend -L20G /dev/rootvg/tmplv
+            xfs_growfs /dev/rootvg/tmplv
+        fi
+    fi
+}
+
+function start_restart_firewalld() {
+    set +e
+    systemctl is-active --quiet firewalld
+    if [ $? -ne 0 ]; then
+        echo "Enabling and starting firewalld..."
+        systemctl enable firewalld
+        systemctl start firewalld
+    else
+        echo "Restarting firewalld..."
+        systemctl restart firewalld
+    fi
+    sleep 10
+    set -e
+}
+
+function block_aws_ec2_metadatasvc() {
+    if [[ $CLOUD_PROVIDER == "aws" ]]; then
+        route add -host $METADATA_IP reject
+    fi
+}
+
+function add_firewalld_rules() {	
+    setenforce 0	
+    set +e	
+    exists=`firewall-cmd --zone=trusted --query-source=$POD_NETWORK_CIDR`	
+    if [[ $exists == "no" ]]; then	
+        firewall-cmd --zone=trusted --add-source=$POD_NETWORK_CIDR --permanent	
+    fi	
+
+    exists=`firewall-cmd --zone=trusted --query-source=$SERVICE_CIDR`	
+    if [[ $exists == "no" ]]; then	
+        firewall-cmd --zone=trusted --add-source=$SERVICE_CIDR --permanent	
+    fi	
+
+    exists=`firewall-cmd --zone=trusted --query-interface=$INTERNAL_INTERFACE`	
+    if [[ $exists == "no" ]]; then	
+        firewall-cmd --zone=trusted --add-interface=$INTERNAL_INTERFACE --permanent	
+    fi	
+
+    exists=`firewall-cmd --zone=trusted --query-masquerade`	
+    if [[ $exists == "no" ]]; then	
+        firewall-cmd --zone=trusted --add-masquerade --permanent	
+    fi	
+
+    setenforce 1	
+    set -e	
 }
 
 function configure_ip_tables() {
-    systemctl disable firewalld || true
-    systemctl stop firewalld || true
-
-    # Insert IP tables rules
-    echo -e '*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n-A OUTPUT -o lo -j ACCEPT\n-A OUTPUT -d 172.31.0.0/16 -p tcp -j ACCEPT\n-A OUTPUT -d 172.31.0.0/16 -p udp -j ACCEPT\n-A OUTPUT -d 10.0.0.0/8 -p tcp -j ACCEPT\n-A OUTPUT -d 10.0.0.0/8 -p udp -j ACCEPT\n-A OUTPUT -p tcp -m tcp ! --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT\n-A OUTPUT -p udp --dport 123 -j ACCEPT\n-A INPUT -p udp --sport 123 -j ACCEPT\nCOMMIT' > /etc/rtf-iptables.rules
-    echo -e '[Unit]\nDescription=Packet Filtering Framework\n\n[Service]\nType=oneshot\nExecStart=/usr/sbin/iptables-restore /etc/rtf-iptables.rules\nExecReload=/usr/sbin/iptables-restore /etc/rtf-iptables.rules\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target' > /etc/systemd/system/iptables.service
+    if [[ $VERSION_ID == 8* ]]; then # RHEL/CentOS 8.x
+        set +e
+        which firewalld &> /dev/null
+        if [[ $? != 0 ]]; then
+            echo "Firewalld not installed, starting installation..."
+            bash -c "$YUM_WITH_PROXY install -y firewalld" || true
+            if [[ $? != 0 ]]; then
+                echo "Error: firewalld installation failed. Exiting"
+                exit 1
+            fi
+        fi
+        set -e
+        start_restart_firewalld
+        echo "Configuring firwalld rules..."
+        add_firewalld_rules        
+    else # Centos 7.x and earlier
+        systemctl disable firewalld || true
+        systemctl stop firewalld || true
+        # Insert IP tables rules
+        echo "Configuring iptables rules..."
+        echo -e '*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n-A OUTPUT -o lo -j ACCEPT\n-A OUTPUT -d 172.31.0.0/16 -p tcp -j ACCEPT\n-A OUTPUT -d 172.31.0.0/16 -p udp -j ACCEPT\n-A OUTPUT -d 10.0.0.0/8 -p tcp -j ACCEPT\n-A OUTPUT -d 10.0.0.0/8 -p udp -j ACCEPT\n-A OUTPUT -p tcp -m tcp ! --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT\n-A OUTPUT -p udp --dport 123 -j ACCEPT\n-A INPUT -p udp --sport 123 -j ACCEPT\nCOMMIT' > /etc/rtf-iptables.rules
+        echo -e '[Unit]\nDescription=Packet Filtering Framework\n\n[Service]\nType=oneshot\nExecStart=/usr/sbin/iptables-restore /etc/rtf-iptables.rules\nExecReload=/usr/sbin/iptables-restore /etc/rtf-iptables.rules\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target' > /etc/systemd/system/iptables.service
+    fi
+    block_aws_ec2_metadatasvc
 }
 
 function configure_kernel_modules() {
@@ -403,13 +505,23 @@ EOF
     fi
 
     sysctl -p /etc/sysctl.d/50-telekube.conf
+    check_selinux_status
 }
 
 function start_system_services() {
     systemctl --system daemon-reload
-    systemctl enable iptables.service
+
+    # Enable and start iptables service for 7.x OS versions
+    if [[ $VERSION_ID == 7* ]]; then
+        systemctl enable iptables.service
+        systemctl start iptables.service
+    fi
+
+    if [[ $VERSION_ID == 8* ]]; then
+        start_restart_firewalld
+    fi
+
     systemctl enable chronyd
-    systemctl start iptables.service
     systemctl start chronyd
 }
 
@@ -426,7 +538,7 @@ function fetch_rtfctl() {
 }
 
 function add_cgroup_cleanup_job() {
-  source /etc/os-release
+
   if [[ $VERSION_ID != 7* ]]; then
     echo "Skipped. Detected OS version: $VERSION_ID, not compatible."
     return 0
@@ -632,6 +744,22 @@ function create_rtf_namespace() {
     ${KUBECTL_CMD_PREFIX} label ns rtf rtf.mulesoft.com/role=rtf || true
 }
 
+function verify_outbound_connectivity() {
+    RTFCTL=${BASE_DIR}/rtfctl
+    if [ ! -e "${RTFCTL}" ]; then
+        echo "rtfctl not found at ${RTFCTL}, attempting to locate rtfctl"
+        RTFCTL=$(find / -name rtfctl -type f)
+    fi
+
+    if [ ! -e "${RTFCTL}" ]; then
+        echo "Error: couldn't locate rtfctl, giving up"
+        exit 1
+    fi
+
+    REGION=$(echo $RTF_REGION| cut -d'-' -f 1)
+    HTTP_PROXY="$RTF_HTTP_PROXY" ${RTFCTL} test outbound-network --use-env-proxy --mutual-tls-check=false --region=$REGION
+}
+
 function install_rtf_components() {
     if [ -z "$RTF_ACTIVATION_TOKEN" ]; then
         echo "Skipped. RTF_ACTIVATION_TOKEN not set.  Creating namespace only."
@@ -640,9 +768,9 @@ function install_rtf_components() {
     fi
 
     if [ -z "$RTF_AGENT_URL" ]; then
-        HTTP_PROXY="$RTF_HTTP_PROXY" MONITORING_PROXY="$RTF_MONITORING_PROXY" ./rtfctl install ${RTF_ACTIVATION_DATA}
+        HTTP_PROXY="$RTF_HTTP_PROXY" MONITORING_PROXY="$RTF_MONITORING_PROXY" ./rtfctl install ${RTF_ACTIVATION_DATA} --timeout ${INSTALL_TIMEOUT}
     else
-        HTTP_PROXY="$RTF_HTTP_PROXY" MONITORING_PROXY="$RTF_MONITORING_PROXY" ./rtfctl install ${RTF_ACTIVATION_DATA} --helm-chart-location ${RTF_AGENT_URL}
+        HTTP_PROXY="$RTF_HTTP_PROXY" MONITORING_PROXY="$RTF_MONITORING_PROXY" ./rtfctl install ${RTF_ACTIVATION_DATA} --helm-chart-location ${RTF_AGENT_URL} --timeout ${INSTALL_TIMEOUT}
     fi
 }
 
@@ -729,6 +857,24 @@ function purge() {
   esac
   echo
   echo "Purge complete."
+}
+
+function check_selinux_status() {
+    SELINUX_ENABLED=`getenforce`
+    if [ $SELINUX_ENABLED == "Enforcing" ]; then
+        if [ $DISABLE_SELINUX == true ]; then
+            echo "SELinux is currently enabled, disabling it"
+            setenforce 0
+            # To preserve selinux disabled settings upon reboot update selinux config
+            sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
+            sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
+        else
+            echo "Please disable SELinux and retry."
+            exit 1
+        fi
+    else
+        echo "SELinux is already disabled"
+    fi
 }
 
 function activate() {
@@ -825,6 +971,9 @@ if [[ $SCRIPT_DIR != ${BASE_DIR}* ]]; then
    cp $BASH_SOURCE $BASE_DIR/init.sh || true
 fi
 
+# source OS related env variables
+source /etc/os-release
+
 cd $BASE_DIR
 
 if [ "$1" == "purge" ]; then
@@ -862,16 +1011,17 @@ fetch_activation_properties
 validate_properties
 
 if [ "$RTF_INSTALL_ROLE" == "leader" ]; then
-    STEP_COUNT=15
+    STEP_COUNT=17
 else
-    STEP_COUNT=10
+    STEP_COUNT=11
 fi
 
 # Cluster Setup
+run_step check_kernel_version "Verify kernel version"
 run_step install_required_packages "Install required packages"
 run_step format_and_mount_disks "Format and mount disks"
 run_step configure_ip_tables "Configure IP tables rules"
-run_step configure_kernel_modules "Enable kernel modules"
+run_step configure_kernel_modules "Enable and configure kernel modules"
 run_step set_inotify_limit "Set inotify watch limits"
 run_step start_system_services "Start system services"
 run_step fetch_rtfctl "Fetch rtfctl tool"
@@ -882,11 +1032,12 @@ if [ "$RTF_INSTALL_ROLE" == "leader" ]; then
 else
     run_step join_cluster "Join cluster"
 fi
-run_step inject_proxy_into_dockerd "Configure dockerd proxy"
 run_step add_cgroup_cleanup_job "Add cgroup cleanup job"
+run_step inject_proxy_into_dockerd "Configure dockerd proxy"
 
 # RTF Setup
 if [ "$RTF_INSTALL_ROLE" == "leader" ]; then
+    run_step verify_outbound_connectivity "Outbound network check"
     run_step install_rtf_components "Install RTF components"
     run_step install_mule_license "Install Mule license"
     run_step wait_for_connectivity "Wait for connectivity"
