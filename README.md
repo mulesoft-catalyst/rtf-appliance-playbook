@@ -15,6 +15,8 @@ Refer to [Ansible Docs](https://docs.ansible.com/ansible/latest/index.html), cho
 
 Ansible works against multiple managed nodes (hosts), in RTF appliance context, the controller + worker node VMs, in the form of a list or group of lists known as `inventory`.
 
+`TL;DR`: the 1st controller assumes the `installer` role (it is the only member of the `installer` group), all other controller and worker nodes are joiners (grouped in the `[nodes]` group).
+
 The **hosts** file includes all RTF appliance cluster nodes, including controllers and workers.
 
 Adjust the hosts file to reflect the target environment:
