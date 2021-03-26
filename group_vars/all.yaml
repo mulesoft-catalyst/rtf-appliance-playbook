@@ -21,6 +21,10 @@ monitoring_proxy:
 k8s_service_network_cidr="10.100.0.0/16"
 # k8s pod network CIDR
 k8s_pod_network_cidr: "10.244.0.0/16"
+# default Linux NIC - eth0
+# adjust default NIC name for systems using predicable network interface names
+# pass kernel command line parameter net.ifnames=0 to use eth[0123...]
+internal_interface="eth0"
 # rtf backup dir
 rtf_backup_dir: "/var/lib/gravity/backup"
 # mandatory package to install if any -- UNCOMMENT List Below to set it up
