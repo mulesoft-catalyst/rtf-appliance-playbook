@@ -18,21 +18,21 @@ no_proxy:
 # socks5 proxy setting for anypoint monitoring - socks5://socks5.company.com:1080
 monitoring_proxy:
 # k8s service CIDR
-k8s_service_network_cidr="10.100.0.0/16"
+k8s_service_network_cidr: "10.100.0.0/16"
 # k8s pod network CIDR
 k8s_pod_network_cidr: "10.244.0.0/16"
 # default Linux NIC - eth0
 # adjust default NIC name for systems using predicable network interface names
 # pass kernel command line parameter net.ifnames=0 to use eth[0123...]
-internal_interface="eth0"
+internal_interface: "eth0"
 # enable/disable SELinux on cluster nodes' host OS
-disable_selinux="false"
+disable_selinux: "false"
 # rtf backup dir
 rtf_backup_dir: "/var/lib/gravity/backup"
 # mandatory package to install if any -- UNCOMMENT List Below to set it up
-# packages:
-# - tmux
-# - vim
+packages:
+ - tmux
+ - vim
 # - bash-completion
 # - rsync
 # - bind-utils
