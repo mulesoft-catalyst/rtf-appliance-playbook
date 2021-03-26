@@ -16,7 +16,10 @@ ansible_ssh_private_key_file=/path/to/ssh_key.pem
 # AWS NVMe - /dev/nvme1n1, /dev/nvme2n1, etc...
 
 [nodes]
-#example if multiple controller
-# 18.139.85.192 internal_ip=10.1.0.6 docker_device=/dev/xvdb etcd_device=/dev/xvdc role=controller
+# more controller nodes as joiner
+# 18.139.85.183 internal_ip=10.1.0.7 docker_device=/dev/xvdb etcd_device=/dev/xvdc role=controller
+# 18.139.85.201 internal_ip=10.1.0.8 docker_device=/dev/xvdb etcd_device=/dev/xvdc role=controller
+# worker nodes as joiner
 18.140.55.203 internal_ip=10.1.0.9 docker_device=/dev/nvme1n1 role=worker
-54.254.140.215 internal_ip=10.1.0.8 docker_device=/dev/nvme1n1 role=worker
+54.254.140.215 internal_ip=10.1.0.10 docker_device=/dev/nvme1n1 role=worker
+52.35.88.155 internal_ip=10.1.0.11 docker_device=/dev/nvme1n1 role=worker
