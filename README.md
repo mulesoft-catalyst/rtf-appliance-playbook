@@ -9,9 +9,9 @@
 
 Refer to [Ansible Docs](https://docs.ansible.com/ansible/latest/index.html), choose the best option to install ansible on the control node(s).
 
-## Running the RTF Appliance Playbook
+## Running the Playbook
 
-### Build the Inventory file
+### Create Inventory file
 
 Ansible works against multiple managed nodes (hosts), in RTF appliance context, the controller + worker node VMs, in the form of a list or group of lists known as `inventory`.
 
@@ -28,13 +28,15 @@ Adjust the hosts file to reflect the target environment:
 
 > NOTE: `installer` is the 1st controller node from which everything is bootstrapped.
 
-### Global Variable
+### Set Playbook Variables
 
 Ansible playbook is using global variable at `group_vars/all.yaml`.
 
 All RTF Install related variables can be set in the `group_vars/all.yaml`.
 
-### Installer File
+### RTF Appliance Installer
+
+> NOTE: It is a self-contained binary installer created using `gravity`.
 
 Place the installer file at `installers` folder, change `rtf_installer` global variable to installer file and put `rtf_download=no` at global variable file if you don't want the rtf installer node to download the installer over public Internet (should be avoided if outbound connectivity is slow, e.g. via a slow Proxy).
 
