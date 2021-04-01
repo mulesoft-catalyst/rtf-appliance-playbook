@@ -47,15 +47,42 @@ ansible-playbook -i hosts rtf-install.yaml
 ```
 > NOTE: increase verbose level by specifying `-v`, `-vvv` or even `-vvvv`, `RTFM` for more.
 
+
+### Uninstall RTF Appliance
+
+```bash
+ansible-playbook -i hosts rtf-uninstall.yaml
+```
+> NOTE: if more flexibility is required during the uninstall process, use ad-hoc tasks instead.
+
+```bash
+# example
+# uninstall gravity
+ansible all -m shell -a "gravity system uninstall --confirm" -b -i hosts -l 'all'
+
+# clean up RTF directory structure
+# treat installer node differently to save time
+ansible all -m shell -a "rm -rfv /opt/anypoint/runtimefabric" -b -i hosts -l 'all:!installer'
+ansible all -m shell -a "sudo rm -rfv /opt/anypoint/runtimefabric/.{state,rtf,data}" -b -i hosts -l 'installer'
+
+# umount files systems
+ansible all -m shell -a "umount /dev/xvdb; sudo umount /dev/xvdc" -b -i hosts -l 'all'
+# remove fstab entries for etcd and docker block devices
+ansible all -m shell -a "sed -i '/RTF/d' /etc/fstab" -b -i hosts -l 'all'
+
+# reboot all nodes to get clean state
+ansible all -m shell -a "systemctl reboot" -b -i hosts -l 'nodes'
+```
+
 ### Troubleshooting
 
 To be added
 
 Procedure
 1. review log, understand what has failed
-2. identify nodes that has failed to bootstrap (installer node) or join (all others)
+2. identify nodes that has failed to bootstrap (installer) node or joining (all others) node(s)
 3. group the failed nodes in inventory file (e.g. `[failed]`)
-4. clean up against the failed nodes (ansible ad-hoc tasks), by leveraging the `--limit 'all:!failed'` option.
-5. run the playbook against the failed (remaining) nodes
+4. run cleanup against the failed nodes (ansible ad-hoc tasks), by leveraging the `--limit 'all:!failed'` option
+5. run the playbook against the failed (remaining) nodes if installer node has completed registration; otherwise, rerun install playbook completely
 
 Repeat if necessary (unlucky).
