@@ -19,49 +19,49 @@
   - name: create install dir
     become: true
     file:
-        path: "{{install_dir}}"
+        path: "{{ install_dir }}"
         state: directory
         mode: '0755'
-        owner: '{{ansible_user}}'
-        group: '{{ansible_user}}'
+        owner: '{{ ansible_user }}'
+        group: '{{ ansible_user }}'
   - name: Copy Init Script
     copy:
         src: "scripts/init.sh"
-        dest: "{{install_dir}}"
+        dest: "{{ install_dir }}"
         mode: '0755'
   - name: copy ENV Nodes
     template:
         src: "templates/env-{{role}}.j2"
-        dest: "{{install_dir}}/env"
+        dest: "{{ install_dir }}/env"
         mode: '0755'
 - hosts: installer[0]
   tasks:
   - name: check Installer Package is present
     stat:
-      path: "{{install_dir}}/installer.tar.gz"
+      path: "{{ install_dir }}/installer.tar.gz"
     register: installer
   - name: download Installer Package
     get_url:
-      url:  "{{rtf_installer}}"
-      dest: "{{install_dir}}/installer.tar.gz"
+      url:  "{{ rtf_installer }}"
+      dest: "{{ install_dir }}/installer.tar.gz"
     when: installer.stat.exists == False and rtf_download
   - name: copy installer file
     copy:
-        src: "{{rtf_installer}}"
-        dest: "{{install_dir}}/installer.tar.gz"
+        src: "{{ rtf_installer }}"
+        dest: "{{ install_dir }}/installer.tar.gz"
         mode: "0644"
     when: installer.stat.exists == False and not rtf_download
-  - name: execute init.sh
+  - name: execute init.sh on installer node
     become: true
     shell: ./init.sh
     args:
-        chdir: "{{install_dir}}"
+        chdir: "{{ install_dir }}"
 - hosts: nodes
   vars:
     install_script: "install-node.sh"
   tasks:
-  - name: execute init.sh Node
+  - name: execute init.sh on joining node
     become: true
     shell: ./init.sh
     args:
-        chdir: "{{install_dir}}"
+        chdir: "{{ install_dir }}"
