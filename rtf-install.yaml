@@ -57,8 +57,6 @@
     args:
         chdir: "{{ install_dir }}"
 - hosts: nodes
-  vars:
-    install_script: "install-node.sh"
   tasks:
   - name: execute init.sh on joining node
     become: true
