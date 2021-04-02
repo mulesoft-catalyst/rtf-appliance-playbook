@@ -1,65 +1,65 @@
 ---
 - hosts: all
   tasks:
-  - name: debug variable
-    debug:
+    - name: debug variable
+      debug:
         var: groups['installer'][0]
         verbosity: 2
-  - name: debug variable inventory
-    debug:
+    - name: debug variable inventory
+      debug:
         var: hostvars
         verbosity: 2
-  - name: install required package
-    package:
+    - name: install required package
+      package:
         name: "{{ item }}"
         state: present
-    become: yes
-    with_items: "{{ packages }}"
-    when: packages is defined
-  - name: create install dir
-    become: true
-    file:
+      become: yes
+      with_items: "{{ packages }}"
+      when: packages is defined
+    - name: create install dir
+      become: true
+      file:
         path: "{{ install_dir }}"
         state: directory
-        mode: '0755'
-        owner: '{{ ansible_user }}'
-        group: '{{ ansible_user }}'
-  - name: Copy Init Script
-    copy:
+        mode: "0755"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+    - name: Copy Init Script
+      copy:
         src: "scripts/init.sh"
         dest: "{{ install_dir }}"
-        mode: '0755'
-  - name: copy ENV Nodes
-    template:
+        mode: "0755"
+    - name: copy ENV Nodes
+      template:
         src: "templates/env-{{role}}.j2"
         dest: "{{ install_dir }}/env"
-        mode: '0755'
+        mode: "0755"
 - hosts: installer[0]
   tasks:
-  - name: check Installer Package is present
-    stat:
-      path: "{{ install_dir }}/installer.tar.gz"
-    register: installer
-  - name: download Installer Package
-    get_url:
-      url:  "{{ rtf_installer }}"
-      dest: "{{ install_dir }}/installer.tar.gz"
-    when: installer.stat.exists == False and rtf_download
-  - name: copy installer file
-    copy:
+    - name: check Installer Package is present
+      stat:
+        path: "{{ install_dir }}/installer.tar.gz"
+      register: installer
+    - name: download Installer Package
+      get_url:
+        url: "{{ rtf_installer }}"
+        dest: "{{ install_dir }}/installer.tar.gz"
+      when: installer.stat.exists == False and rtf_download
+    - name: copy installer file
+      copy:
         src: "{{ rtf_installer }}"
         dest: "{{ install_dir }}/installer.tar.gz"
         mode: "0644"
-    when: installer.stat.exists == False and not rtf_download
-  - name: execute init.sh on installer node
-    become: true
-    shell: ./init.sh
-    args:
+      when: installer.stat.exists == False and not rtf_download
+    - name: execute init.sh on installer node
+      become: true
+      shell: ./init.sh
+      args:
         chdir: "{{ install_dir }}"
 - hosts: nodes
   tasks:
-  - name: execute init.sh on joining node
-    become: true
-    shell: ./init.sh
-    args:
+    - name: execute init.sh on joining node
+      become: true
+      shell: ./init.sh
+      args:
         chdir: "{{ install_dir }}"
