@@ -13,9 +13,14 @@
       file:
         path: /opt/anypoint/runtimefabric
         state: absent
-    - name: umount etcd device
+    - name: controllers with dedicated etcd device or not
+      become: yes
+      shell: "findmnt /var/lib/gravity/planet/etcd"
+      register: etcd_device
+    - name: umount etcd device for controllers
       become: yes
       shell: "umount -l /var/lib/gravity/planet/etcd"
+      when: etcd_device.rc == 0
     - name: umount docker ce device
       become: yes
       shell: "umount -l /var/lib/gravity"
