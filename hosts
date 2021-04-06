@@ -4,22 +4,42 @@ ansible_user=rtfadmin
 # ansible_become_pass=iP@ss!
 ansible_ssh_private_key_file=/path/to/ssh_key.pem
 
-[installer]
-18.139.85.192 internal_ip=10.1.0.6 docker_device=/dev/xvdb etcd_device=/dev/xvdc role=installer
 # IP and internal IP can be the same
 # in case no public IPs are assigned to VMs
+
+[installer]
+# internal_ip=10.22.0.134 docker_device=/dev/xvdb etcd_device=/dev/xvdc role=installer
+13.210.44.76 internal_ip=10.22.0.134 docker_device=/dev/xvdb etcd_device=/dev/xvdc role=installer
+
+[nodes]
+# more controller and worker nodes as joiner
+3.26.38.28 internal_ip=10.22.1.88 docker_device=/dev/xvdb etcd_device=/dev/xvdc role=controller
+13.236.147.174 internal_ip=10.22.2.188 docker_device=/dev/xvdb etcd_device=/dev/xvdc role=controller
+54.253.210.102 internal_ip=10.22.0.35 docker_device=/dev/xvdb role=worker
+13.211.127.196 internal_ip=10.22.1.209 docker_device=/dev/xvdb role=worker
+54.206.98.4 internal_ip=10.22.2.123 docker_device=/dev/xvdb role=worker
+
+[controllers]
+13.210.44.76 internal_ip=10.22.0.134 role=installer
+3.26.38.28 internal_ip=10.22.1.88 
+13.236.147.174 internal_ip=10.22.2.188
+
+[controllers:vars]
+docker_device=/dev/xvdb
+etcd_device=/dev/xvdc
+role=controller
+
+[workers]
+54.253.210.102 internal_ip=10.22.0.35
+13.211.127.196 internal_ip=10.22.1.209
+54.206.98.4 internal_ip=10.22.2.123 
+
+[workers:vars]
+docker_device=/dev/xvdb
+role=worker
 
 # block device naming
 # Xen /dev/xvd{a..z}
 # KVM - /dev/vd{a..z}
 # VMware - /dev/sd{a..z}
 # AWS NVMe - /dev/nvme1n1, /dev/nvme2n1, etc...
-
-[nodes]
-# more controller nodes as joiner
-# 18.139.85.183 internal_ip=10.1.0.7 docker_device=/dev/xvdb etcd_device=/dev/xvdc role=controller
-# 18.139.85.201 internal_ip=10.1.0.8 docker_device=/dev/xvdb etcd_device=/dev/xvdc role=controller
-# worker nodes as joiner
-18.140.55.203 internal_ip=10.1.0.9 docker_device=/dev/nvme1n1 role=worker
-54.254.140.215 internal_ip=10.1.0.10 docker_device=/dev/nvme1n1 role=worker
-52.35.88.155 internal_ip=10.1.0.11 docker_device=/dev/nvme1n1 role=worker
