@@ -66,7 +66,8 @@ ansible all -m shell -a "rm -rfv /opt/anypoint/runtimefabric" -b -i hosts -l 'al
 ansible all -m shell -a "sudo rm -rfv /opt/anypoint/runtimefabric/.{state,rtf,data}" -b -i hosts -l 'installer'
 
 # umount files systems
-ansible all -m shell -a "umount /dev/xvdb; sudo umount /dev/xvdc" -b -i hosts -l 'all'
+ansible all -m shell -a "umount -l /dev/xvdb; umount -l /dev/xvdc" -b -i hosts -l 'controllers'
+ansible all -m shell -a "umount -l /dev/xvdc" -b -i hosts --limit 'workers'
 # remove fstab entries for etcd and docker block devices
 ansible all -m shell -a "sed -i '/RTF/d' /etc/fstab" -b -i hosts -l 'all'
 
@@ -76,9 +77,8 @@ ansible all -m shell -a "systemctl reboot" -b -i hosts -l 'nodes'
 
 ### Troubleshooting
 
-To be added
+General troubleshooting steps:
 
-Procedure
 1. review log, understand what has failed
 2. identify nodes that has failed to bootstrap (installer) node or joining (all others) node(s)
 3. group the failed nodes in inventory file (e.g. `[failed]`)
