@@ -66,8 +66,8 @@ ansible all -m shell -a "rm -rfv /opt/anypoint/runtimefabric" -b -i hosts -l 'al
 ansible all -m shell -a "sudo rm -rfv /opt/anypoint/runtimefabric/.{state,rtf,data}" -b -i hosts -l 'installer'
 
 # umount files systems
-ansible all -m shell -a "umount -l /dev/xvdb; umount -l /dev/xvdc" -b -i hosts -l 'controllers'
-ansible all -m shell -a "umount -l /dev/xvdc" -b -i hosts --limit 'workers'
+ansible all -m shell -a "umount -l /var/lib/gravity/planet/etcd; umount -l /var/lib/gravity" -b -i hosts -l 'controllers'
+ansible all -m shell -a "umount -l /var/lib/gravity" -b -i hosts --limit 'workers'
 # remove fstab entries for etcd and docker block devices
 ansible all -m shell -a "sed -i '/RTF/d' /etc/fstab" -b -i hosts -l 'all'
 
