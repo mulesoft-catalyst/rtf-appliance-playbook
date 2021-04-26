@@ -23,8 +23,8 @@
         state: directory
         mode: "0755"
         owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
-    - name: Copy Init Script
+        group: "{{ ansible_group }}"
+    - name: Copy init.sh script
       copy:
         src: "scripts/init.sh"
         dest: "{{ install_dir }}"
