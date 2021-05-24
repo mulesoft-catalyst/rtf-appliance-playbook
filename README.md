@@ -13,11 +13,18 @@ Refer to [Ansible Docs](https://docs.ansible.com/ansible/latest/index.html), cho
 
 ### Create Inventory file
 
-Ansible works against multiple managed nodes (hosts), in RTF appliance context, the controller + worker node VMs, in the form of a list or group of lists known as `inventory`.
+Ansible works against multiple managed nodes (hosts), in RTF appliance context, they are the controller and worker node VMs, in the form of a list or group of lists known as `inventory`.
 
-`TL;DR`: the 1st controller assumes the `installer` role (it is the only member of the `installer` group), all other controller and worker nodes are joiners (grouped in the `[nodes]` group).
+> **IMPORTANT**: Please explicitly specify Linux user and group in the inventory file if remote target systems do NOT follow the [User Private Group](https://docs.fedoraproject.org/en-US/fedora/rawhide/system-administrators-guide/basic-system-configuration/Managing_Users_and_Groups/) Scheme (AKA `UPG` - user has a group of the same name, user is the sole member) which is widely adopted by most mainstream distributions. Otherwise `permission denied` errors are expected when performing file / directory related operations requiring escalated privileges.
 
-The **hosts** file includes all RTF appliance cluster nodes, including controllers and workers.
+**Recommendation**: Make remote target Linux systems `UPG` compliant if possible.
+1. In `/etc/login.defs`, set `USERGROUPS_ENAB yes` (default value unless changed). It can be overridden by specifying `-N` or `--no-user-group` running `useradd` when creating a new user.
+2. Manually create a private group for user, add user to group as its sole member. Example for user `noob` at scale: `ansible all -m shell -a "groupadd noob && usermod -aG noob noob" -b -i inventory_file`.
+
+
+**`TL;DR`**: the 1st controller assumes the `installer` role (it is the only member of the `installer` group), all other controller and worker nodes are joiners (grouped in the `[nodes]` group).
+
+The **`hosts`** file includes all RTF appliance cluster nodes, including controllers and workers.
 
 Adjust the hosts file to reflect the target environment:
 
@@ -38,7 +45,7 @@ All RTF Install related variables can be set in the `group_vars/all.yaml`.
 
 > NOTE: It is a self-contained binary installer created using `gravity`.
 
-Place the installer file at `installers` folder, change `rtf_installer` global variable to installer file and put `rtf_download=no` at global variable file if you don't want the rtf installer node to download the installer over public Internet (should be avoided if outbound connectivity is slow, e.g. via a slow Proxy).
+Place the installer file at `installers` folder or symlink it, change `rtf_installer` global variable to installer file and put `rtf_download=no` at global variable file if you don't want the rtf installer node to download the installer over public Internet (should be avoided if outbound connectivity is slow, e.g. via a slow Proxy).
 
 ### Running the show (playbook)
 
