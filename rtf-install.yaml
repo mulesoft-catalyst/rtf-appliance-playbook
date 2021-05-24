@@ -56,9 +56,16 @@
       shell: ./init.sh
       args:
         chdir: "{{ install_dir }}"
-- hosts: nodes
+- hosts: controllers
   tasks:
-    - name: execute init.sh on joining node
+    - name: execute init.sh on joining controller nodes
+      become: true
+      shell: ./init.sh
+      args:
+        chdir: "{{ install_dir }}"
+- hosts: workers
+  tasks:
+    - name: execute init.sh on worker nodes
       become: true
       shell: ./init.sh
       args:
