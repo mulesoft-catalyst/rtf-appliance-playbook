@@ -41,6 +41,10 @@ Ansible playbook is using global variable at `group_vars/all.yaml`.
 
 All RTF Install related variables can be set in the `group_vars/all.yaml`.
 
+> IMPORTANT: recently `init.sh` defaults default Linux NIC to `eth0` which may not work for systems adopting systemd (v197) Predictable NIC names, e.g. Fedora, `EL{7,8}`.
+
+Make sure to set it correctly reflecting target systems in `group_vars/all.yaml`, e.g. `internal_interface: "ens192"` for VMware (as hypervisor), and VirtualBox emulating Intel Pro/1000 MT Desktop will be persisted as `enp0s3` by default. Of course, you can revert to traditional NIC names by passing `net.ifnames=0` as kernel command line parameter at boot via a bootloader (GRUB2).
+
 ### RTF Appliance Installer
 
 > NOTE: It is a self-contained binary installer created using `gravity`.
