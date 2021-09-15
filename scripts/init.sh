@@ -2,7 +2,7 @@
 set -eo pipefail
 
 # Constants
-SCRIPT_VERSION='20210129-4a7f3c6'
+SCRIPT_VERSION='20210826-d2dad4d'
 REDIRECT_LOG=/var/log/rtf-init.log
 FSTAB_COMMENT="# Added by RTF"
 BASE_DIR=/opt/anypoint/runtimefabric
@@ -34,10 +34,11 @@ LINE="\n================================================"
 # Defaults
 RTF_SERVICE_UID=${RTF_SERVICE_UID:-1000}
 RTF_SERVICE_GID=${RTF_SERVICE_GID:-1000}
-POD_NETWORK_CIDR=${POD_NETWORK_CIDR:-10.244.0.0/16}
-SERVICE_CIDR=${SERVICE_CIDR:-10.100.0.0/16}
+POD_NETWORK_CIDR=${POD_NETWORK_CIDR:-10.250.0.0/16}
+SERVICE_CIDR=${SERVICE_CIDR:-10.96.0.0/16}
 INTERNAL_INTERFACE=${INTERNAL_INTERFACE:-eth0}
 DISABLE_SELINUX=${DISABLE_SELINUX:-false}
+BLOCK_AWS_EC2_METADATASVC=${BLOCK_AWS_EC2_METADATASVC:-false}
 
 # ADDITIONAL_ENV_VARS_PLACEHOLDER_DO_NOT_REMOVE
 
@@ -214,13 +215,17 @@ function detect_properties() {
             fi
         fi
     fi
+    
+    CURL_WITH_PROXY="curl"
+    PKG_MGR_WITH_PROXY="yum"
 
-    if [ -z $RTF_HTTP_PROXY ]; then
-        CURL_WITH_PROXY="curl"
-        YUM_WITH_PROXY="yum"
-    else
+    if [[ "$ID_LIKE" == *"debian"* ]]; then
+         PKG_MGR_WITH_PROXY="apt-get"
+    fi
+
+    if [ -n "$RTF_HTTP_PROXY" ]; then
         CURL_WITH_PROXY="curl --proxy $RTF_HTTP_PROXY"
-        YUM_WITH_PROXY="https_proxy='$RTF_HTTP_PROXY' http_proxy='$RTF_HTTP_PROXY' yum"
+        PKG_MGR_WITH_PROXY="https_proxy='$RTF_HTTP_PROXY' http_proxy='$RTF_HTTP_PROXY' $PKG_MGR_WITH_PROXY"
     fi
 
     # Update NO_PROXY to make sure we bypass local addresses
@@ -275,7 +280,7 @@ function validate_properties() {
     return 0
 }
 
-function check_kernel_version() {
+function check_sys_params() {
     MIN_VALID_KERNEL_VERSION="3.10.0-1127"
     CURRENT_KERNEL_VERSION=$(uname -r)
     FIRST_SORTED=$(printf "${CURRENT_KERNEL_VERSION}\n${MIN_VALID_KERNEL_VERSION}\n" | sort -V | head -n 1)
@@ -289,10 +294,42 @@ function check_kernel_version() {
 function install_required_packages() {
     #disable exit-on-error
     set +e
-    rpm -q chrony
+
+    if [[ "$ID_LIKE" == *"debian"* ]]; then
+        echo "update package list"
+        $PKG_MGR_WITH_PROXY update -y
+        echo "Installing selinux-utils..."
+        $PKG_MGR_WITH_PROXY install selinux-utils -y 
+        
+        which iptables &> /dev/null
+        if [[ $? != 0 ]]; then
+            echo "Installing iptables..."
+            $PKG_MGR_WITH_PROXY install iptables -y
+        fi
+        
+        echo "Installing iptables-persistent..."
+        echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections
+        echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections
+        $PKG_MGR_WITH_PROXY install iptables-persistent -yq 
+    fi
+
+    if [[ "$ID_LIKE" == *"fedora"* ]]; then
+        systemctl list-units | grep -i iptables.service &> /dev/null
+        if [[ $? != 0 ]]; then
+            echo "Installing iptables-services..."
+            bash -c "$PKG_MGR_WITH_PROXY install -y iptables-services"
+        fi
+    fi
+
+    if [[ "$ID_LIKE" == *"debian"* ]]; then
+        dpkg -l chrony
+    else
+        rpm -q chrony
+    fi
+
     if [ $? != 0 ]; then
         echo "Installing chrony..."
-        bash -c "$YUM_WITH_PROXY install -y chrony" || true
+        bash -c "$PKG_MGR_WITH_PROXY install -y chrony" || true
     fi
 
     printf "Checking chrony sync status..."
@@ -389,92 +426,101 @@ function format_and_mount_disks() {
         chown -R $RTF_SERVICE_UID:$RTF_SERVICE_GID $ETCD_MOUNT
     fi
 
-    if [ "$CLOUD_PROVIDER" == "azure" ]; then
+    if [ "$CLOUD_PROVIDER" == "azure" ] && [[ "$ID_LIKE" != *"debian"* ]]; then
         if [ -e "/dev/rootvg/optlv" ]; then
             echo "Extending /opt volume"
             lvextend -L15G /dev/rootvg/optlv
-            xfs_growfs /dev/rootvg/optlv
+            if [[ $VERSION_ID == 8* ]]; then
+                xfs_growfs /opt
+            else 
+               echo "Extending /dev/rootvg/optlv volume"
+               xfs_growfs /dev/rootvg/optlv
+            fi
+        else
+            #Extend root volume
+            lvextend -n -L+1G /dev/mapper/rootvg-rootlv
+            #Then change root volume allocation
+            xfs_growfs /
+            #create /optlv
+            lvcreate -L 15G -n optlv rootvg
+            #Format optlv
+            mkfs.xfs /dev/mapper/rootvg-optlv
+            #make temporary directory
+            mkdir /opt-another-view
+            #mount temporary directory
+            mount /dev/mapper/rootvg-optlv /opt-another-view
+            #copy all files.
+            cp -pR /opt/* /opt-another-view
+            #unmount temp directory
+            umount /opt-another-view
+            #mount proper directory
+            mount /dev/mapper/rootvg-optlv /opt
+            #delete temp directory
+            rm -rf /opt-another-view
+            #go to base directory
+            cd $BASE_DIR
         fi
         if [ -e "/dev/rootvg/tmplv" ]; then
             echo "Extending /tmp volume"
             lvextend -L20G /dev/rootvg/tmplv
-            xfs_growfs /dev/rootvg/tmplv
+            if [[ $VERSION_ID == 8* ]]; then
+                xfs_growfs /tmp
+            else 
+               echo "Extending /dev/rootvg/tmplv volume"
+               xfs_growfs /dev/rootvg/tmplv
+            fi
         fi
     fi
 }
 
-function start_restart_firewalld() {
-    set +e
-    systemctl is-active --quiet firewalld
-    if [ $? -ne 0 ]; then
-        echo "Enabling and starting firewalld..."
-        systemctl enable firewalld
-        systemctl start firewalld
-    else
-        echo "Restarting firewalld..."
-        systemctl restart firewalld
-    fi
-    sleep 10
-    set -e
-}
-
 function block_aws_ec2_metadatasvc() {
-    if [[ $CLOUD_PROVIDER == "aws" ]]; then
+    if [[ $CLOUD_PROVIDER == "aws" ]] && [[ $BLOCK_AWS_EC2_METADATASVC == true ]]; then
         route add -host $METADATA_IP reject
     fi
 }
 
-function add_firewalld_rules() {	
-    setenforce 0	
-    set +e	
-    exists=`firewall-cmd --zone=trusted --query-source=$POD_NETWORK_CIDR`	
-    if [[ $exists == "no" ]]; then	
-        firewall-cmd --zone=trusted --add-source=$POD_NETWORK_CIDR --permanent	
-    fi	
-
-    exists=`firewall-cmd --zone=trusted --query-source=$SERVICE_CIDR`	
-    if [[ $exists == "no" ]]; then	
-        firewall-cmd --zone=trusted --add-source=$SERVICE_CIDR --permanent	
-    fi	
-
-    exists=`firewall-cmd --zone=trusted --query-interface=$INTERNAL_INTERFACE`	
-    if [[ $exists == "no" ]]; then	
-        firewall-cmd --zone=trusted --add-interface=$INTERNAL_INTERFACE --permanent	
-    fi	
-
-    exists=`firewall-cmd --zone=trusted --query-masquerade`	
-    if [[ $exists == "no" ]]; then	
-        firewall-cmd --zone=trusted --add-masquerade --permanent	
-    fi	
-
-    setenforce 1	
-    set -e	
+function insert_iptables_rules() {
+    # Insert IP tables rules
+    echo "Configuring iptables rules..."
+    echo -e '*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n-A OUTPUT -o lo -j ACCEPT\n-A OUTPUT -d 172.31.0.0/16 -p tcp -j ACCEPT\n-A OUTPUT -d 172.31.0.0/16 -p udp -j ACCEPT\n-A OUTPUT -d 10.0.0.0/8 -p tcp -j ACCEPT\n-A OUTPUT -d 10.0.0.0/8 -p udp -j ACCEPT\n-A OUTPUT -p tcp -m tcp ! --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT\n-A OUTPUT -p udp --dport 123 -j ACCEPT\n-A INPUT -p udp --sport 123 -j ACCEPT\nCOMMIT' > /etc/rtf-iptables.rules
+    echo -e '[Unit]\nDescription=Packet Filtering Framework\n\n[Service]\nType=oneshot\nExecStart=/usr/sbin/iptables-restore /etc/rtf-iptables.rules\nExecReload=/usr/sbin/iptables-restore /etc/rtf-iptables.rules\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target' > /etc/systemd/system/iptables.service
 }
 
 function configure_ip_tables() {
-    if [[ $VERSION_ID == 8* ]]; then # RHEL/CentOS 8.x
-        set +e
-        which firewalld &> /dev/null
-        if [[ $? != 0 ]]; then
-            echo "Firewalld not installed, starting installation..."
-            bash -c "$YUM_WITH_PROXY install -y firewalld" || true
-            if [[ $? != 0 ]]; then
-                echo "Error: firewalld installation failed. Exiting"
-                exit 1
-            fi
-        fi
-        set -e
-        start_restart_firewalld
-        echo "Configuring firwalld rules..."
-        add_firewalld_rules        
-    else # Centos 7.x and earlier
-        systemctl disable firewalld || true
-        systemctl stop firewalld || true
-        # Insert IP tables rules
-        echo "Configuring iptables rules..."
-        echo -e '*filter\n:INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n-A OUTPUT -o lo -j ACCEPT\n-A OUTPUT -d 172.31.0.0/16 -p tcp -j ACCEPT\n-A OUTPUT -d 172.31.0.0/16 -p udp -j ACCEPT\n-A OUTPUT -d 10.0.0.0/8 -p tcp -j ACCEPT\n-A OUTPUT -d 10.0.0.0/8 -p udp -j ACCEPT\n-A OUTPUT -p tcp -m tcp ! --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT\n-A OUTPUT -p udp --dport 123 -j ACCEPT\n-A INPUT -p udp --sport 123 -j ACCEPT\nCOMMIT' > /etc/rtf-iptables.rules
-        echo -e '[Unit]\nDescription=Packet Filtering Framework\n\n[Service]\nType=oneshot\nExecStart=/usr/sbin/iptables-restore /etc/rtf-iptables.rules\nExecReload=/usr/sbin/iptables-restore /etc/rtf-iptables.rules\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target' > /etc/systemd/system/iptables.service
-    fi
+    case "$ID_LIKE" in
+        *"debian"*)
+                    if [[ "$ID" == "ubuntu" ]]; then
+                        set +e
+                        which ufw &> /dev/null
+                        if [[ $? == 0 ]]; then
+                            if [[ "`ufw status`"  == *"inactive"* ]]; then
+                                echo "ufw is already inactive."
+                            else
+                                echo "Disabling ufw ..."
+                                ufw disable
+                            fi
+                        fi
+                        set -e
+                    fi
+                    insert_iptables_rules
+                    iptables-restore < /etc/rtf-iptables.rules
+                    mkdir -p /etc/iptables
+                    iptables-save > /etc/iptables/rules.v4
+                    ;;
+        *"fedora"*) 
+                    set +e
+                    which firewalld &> /dev/null
+                    if [[ $? == 0 ]]; then
+                        systemctl disable firewalld || true
+                        systemctl stop firewalld || true
+                    fi
+                    set -e
+                    insert_iptables_rules
+                    ;;
+                 *)
+                    echo "Unknown OS distribution."
+                    exit 1
+    esac
     block_aws_ec2_metadatasvc
 }
 
@@ -508,21 +554,45 @@ EOF
     check_selinux_status
 }
 
+function is_service_running() {
+    x=`systemctl is-active $1`
+    if [[ $x != "active" ]]; then
+        echo "Service $1 is not running, please run journalctl -u $1 for detailed information."
+        exit 1
+    fi
+}
+
 function start_system_services() {
     systemctl --system daemon-reload
-
-    # Enable and start iptables service for 7.x OS versions
-    if [[ $VERSION_ID == 7* ]]; then
-        systemctl enable iptables.service
-        systemctl start iptables.service
-    fi
-
-    if [[ $VERSION_ID == 8* ]]; then
-        start_restart_firewalld
-    fi
-
-    systemctl enable chronyd
-    systemctl start chronyd
+    case "$ID_LIKE" in
+        *"debian"*)
+                    echo "Enabling and starting chrony..."
+                    systemctl enable chrony
+                    systemctl start chrony
+                    is_service_running chrony
+                    ;;
+        *"fedora"*) 
+                    # Enable and start iptables service for Fedora.
+                    set +e
+                    systemctl is-active --quiet iptables.service
+                    if [[ $? != 0 ]]; then
+                        set -e
+                        echo "Enabling and starting iptable.service..."
+                        systemctl enable iptables.service
+                        systemctl start iptables.service
+                        is_service_running iptables.service
+                    fi
+                    set -e
+                        
+                    echo "Enabling and starting chrony..."
+                    systemctl enable chronyd
+                    systemctl start chronyd
+                    is_service_running chronyd
+                    ;;
+                 *)
+                    echo "Unknown OS distribution."
+                    exit 1
+    esac
 }
 
 function fetch_rtfctl() {
@@ -866,7 +936,9 @@ function check_selinux_status() {
             echo "SELinux is currently enabled, disabling it"
             setenforce 0
             # To preserve selinux disabled settings upon reboot update selinux config
-            sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
+            if [[ "$ID_LIKE" != *"debian"* ]]; then
+                sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
+            fi
             sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
         else
             echo "Please disable SELinux and retry."
@@ -990,9 +1062,13 @@ elif [ "$1" == "configure-system" ]; then
     if [ "$2" == "--force" ] || [ "$2" == "-f" ]; then
         force="1"
     fi
-    STEP_COUNT=3
+    STEP_COUNT=5
+    load_environment
+    detect_properties
     run_step set_inotify_limit "Set inotify watch limits" $force
     run_step add_cgroup_cleanup_job "Add cgroup cleanup job" $force
+    run_step install_required_packages "Install required packages" $force
+    run_step configure_ip_tables "Configure IP tables rules" $force
     run_step start_system_services "Start system services" $force
     exit
 elif [ "$1" != "" ]; then
@@ -1017,7 +1093,7 @@ else
 fi
 
 # Cluster Setup
-run_step check_kernel_version "Verify kernel version"
+run_step check_sys_params "Check system parameters"
 run_step install_required_packages "Install required packages"
 run_step format_and_mount_disks "Format and mount disks"
 run_step configure_ip_tables "Configure IP tables rules"
