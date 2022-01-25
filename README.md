@@ -5,6 +5,8 @@
 - Works for the RTF appliance model (NOT for BYO k8s model)
 - Consider it the `manual` flavour of install automated via Ansible in an orchestrated fashion (after all it's a multi-node k8s cluster)
 
+> Supported Linux distributions: RHEL {7,8}, Ubuntu LTS 18.04 (20.04 current and 22.04 next LTS to be added).
+
 ## Installing Ansible
 
 Refer to [Ansible Docs](https://docs.ansible.com/ansible/latest/index.html), choose the best option to install ansible on the control node(s).
