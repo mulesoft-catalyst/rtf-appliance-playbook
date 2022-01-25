@@ -8,7 +8,7 @@
       become: yes
       shell: "gravity system uninstall --confirm"
       when: result.rc == 0
-    - name: remove /untimefabric directory structure
+    - name: remove runtimefabric directory structure
       become: yes
       file:
         path: /opt/anypoint/runtimefabric
