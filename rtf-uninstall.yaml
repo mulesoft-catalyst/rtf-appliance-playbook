@@ -13,7 +13,7 @@
       file:
         path: /opt/anypoint/runtimefabric
         state: absent
-    - name: remove fstab entrie
+    - name: remove fstab entries
       become: yes
       shell: "sed -i '/RTF/d' /etc/fstab"
     - name: umount etcd and docker ce devices
